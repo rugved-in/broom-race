@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Broom Race — Hogwarts</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #04021a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    canvas { display: block; cursor: pointer; }
+    #hint {
+      margin-top: 10px;
+      font-size: 12px;
+      color: rgba(200,180,255,0.38);
+      font-family: Georgia, serif;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">HOLD SPACE / ↑ to fly up · release to fall · tap on mobile</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+canvas.width  = 900;
+canvas.height = 400;
+
+const GY = canvas.height - 65;   // Black Lake surface y
+
+let state = 'idle', score = 0, best = 0, frame = 0, spd = 5;
+let holdUp = false, bgX = 0, gndOff = 0;
+
+// ── Input ─────────────────────────────────────────────────────────
+const press   = () => state !== 'running' ? startGame() : (holdUp = true);
+const release = () => { holdUp = false; };
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); press(); }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') release();
+});
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); press(); });
+canvas.addEventListener('pointerup',    release);
+canvas.addEventListener('pointerleave', release);
+
+// ── Harry on broom ────────────────────────────────────────────────
+const H = {
+  x: 140, y: canvas.height / 2, vy: 0,
+  GRAV: 0.45, THRUST: -0.88, VUP: -9, VDN: 13,
+
+  reset() { this.y = canvas.height / 2; this.vy = 0; },
+
+  update() {
+    this.vy = holdUp
+      ? Math.max(this.vy + this.THRUST, this.VUP)
+      : Math.min(this.vy + this.GRAV,   this.VDN);
+    this.y += this.vy;
+    if (this.y < 35)      { this.y = 35;      this.vy = 0; }
+    if (this.y > GY - 8)  { this.y = GY - 8;  die(); }
+  },
+
+  draw(animated) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    const tilt = Math.max(-0.32, Math.min(0.42, this.vy * 0.04));
+    ctx.rotate(tilt);
+
+    // ── broom handle ──
+    ctx.strokeStyle = '#7B3800'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(-44, 7); ctx.lineTo(20, 3); ctx.stroke();
+
+    // ── bristles ──
+    ctx.strokeStyle = '#9B5020'; ctx.lineWidth = 1.2;
+    for (let i = -4; i <= 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-44, 7);
+      ctx.lineTo(-60, 7 + i * 4.5);
+      ctx.stroke();
+    }
+    // binding
+    ctx.fillStyle = '#5C2A00'; ctx.fillRect(-47, 4, 6, 7);
+
+    // ── flowing robes (behind) ──
+    const wave = animated ? Math.sin(frame * 0.12) * 4 : 0;
+    ctx.fillStyle = '#12122a';
+    ctx.beginPath();
+    ctx.moveTo(-5, 1);
+    ctx.lineTo(-16, -3);
+    ctx.lineTo(-34, 2 + wave);
+    ctx.lineTo(-29, 14);
+    ctx.lineTo(-7, 11);
+    ctx.closePath(); ctx.fill();
+
+    // ── body / robe front ──
+    ctx.fillStyle = '#12122a';
+    ctx.beginPath();
+    ctx.moveTo(-5, -5);
+    ctx.lineTo(17, -2);
+    ctx.lineTo(18, 12);
+    ctx.lineTo(-8, 15);
+    ctx.lineTo(-10, 2);
+    ctx.closePath(); ctx.fill();
+
+    // Gryffindor stripe
+    ctx.fillStyle = '#8B0000'; ctx.fillRect(0, -4, 14, 3);
+    ctx.fillStyle = '#FFD700'; ctx.fillRect(0,  -1, 14, 2);
+
+    // ── head ──
+    ctx.fillStyle = '#F5C7A0';
+    ctx.beginPath(); ctx.arc(4, -16, 9, 0, Math.PI * 2); ctx.fill();
+
+    // messy hair (top arc + extra tufts)
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(4, -16, 9, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, -24, 5, 4, -0.3, 0, Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(7, -25, 4, 3,  0.4, 0, Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-2, -20, 3, 3,    0, 0, Math.PI); ctx.fill();
+
+    // ── wizard hat ──
+    ctx.fillStyle = '#0c0c1c';
+    ctx.beginPath();
+    ctx.moveTo(4, -40); ctx.lineTo(-8, -23); ctx.lineTo(17, -23);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(4, -23, 14, 4, 0, 0, Math.PI * 2); ctx.fill();
+
+    // ── glasses ──
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(0, -16, 3.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(8, -16, 3.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(3.5, -16); ctx.lineTo(4.5, -16); ctx.stroke();
+
+    // ── lightning bolt scar ──
+    ctx.strokeStyle = 'rgba(255,215,0,0.72)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(3, -20); ctx.lineTo(2, -22); ctx.lineTo(4.5, -23); ctx.stroke();
+
+    // ── wand ──
+    ctx.strokeStyle = '#7B3800'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(30, -11); ctx.stroke();
+    // wand-tip glow (purple)
+    const wg = ctx.createRadialGradient(30, -11, 0, 30, -11, 7);
+    wg.addColorStop(0, 'rgba(200,120,255,0.92)');
+    wg.addColorStop(1, 'rgba(200,120,255,0)');
+    ctx.fillStyle = wg;
+    ctx.beginPath(); ctx.arc(30, -11, 7, 0, Math.PI * 2); ctx.fill();
+
+    ctx.restore();
+  },
+
+  hb() { return { x: this.x - 22, y: this.y - 20, w: 45, h: 34 }; }
+};
+
+// ── Magical sparkle trail ─────────────────────────────────────────
+const sparks = [];
+function addSparks() {
+  if (frame % 2 !== 0) return;
+  sparks.push({
+    x: H.x - 44 + (Math.random() - 0.5) * 4,
+    y: H.y + 7  + (Math.random() - 0.5) * 6,
+    vx: -1.5 - Math.random() * 2,
+    vy: (Math.random() - 0.5) * 1.5,
+    life: 1, r: 1 + Math.random() * 2.5,
+    hue: Math.random() < 0.5 ? 270 + Math.random() * 40 : 45 + Math.random() * 25
+  });
+}
+function tickSparks() {
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.x += s.vx; s.y += s.vy; s.life -= 0.04;
+    if (s.life <= 0) sparks.splice(i, 1);
+  }
+}
+function drawSparks() {
+  for (const s of sparks) {
+    ctx.save(); ctx.globalAlpha = s.life;
+    ctx.fillStyle = `hsl(${s.hue},100%,72%)`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * s.life, 0, Math.PI * 2);
+    ctx.fill(); ctx.restore();
+  }
+}
+
+// ── Obstacles: castle towers ──────────────────────────────────────
+const obs = [];
+
+function spawnObstacles() {
+  const r = Math.random();
+  if (r < 0.52) {
+    obs.push(makeTower());
+  } else if (r < 0.78) {
+    // bottom tower + top stalactite-tower with gap
+    const o = makeTower();
+    const gap = 112 + Math.random() * 88;
+    o.topH = GY - o.h - gap;
+    if (o.topH > 28) o.hasTop = true;
+    obs.push(o);
+  } else {
+    // twin towers
+    const a = makeTower(); obs.push(a);
+    const b = makeTower(); b.x = a.x + a.w + 16 + Math.random() * 28; obs.push(b);
+  }
+}
+
+function makeTower() {
+  const h = 68 + Math.random() * 118;
+  const w = 44 + Math.random() * 36;
+  const l = 16 + Math.random() * 13;
+  return {
+    x: canvas.width + 70, w, h, y: GY - h,
+    hasTop: false, topH: 0,
+    wins: Math.floor(h / 42),
+    col:  `hsl(220,14%,${l}%)`,
+    dark: `hsl(220,14%,${l - 7}%)`
+  };
+}
+
+function drawTower(o) {
+  const bH = 14, mW = 11, mGap = 9;
+  const mCnt  = Math.max(1, Math.floor(o.w / (mW + mGap)));
+  const bStart = o.x + (o.w - mCnt * (mW + mGap) + mGap) / 2;
+
+  // body
+  ctx.fillStyle = o.col;
+  ctx.fillRect(o.x, o.y + bH, o.w, o.h - bH);
+
+  // stone courses
+  ctx.strokeStyle = o.dark; ctx.lineWidth = 0.8;
+  for (let r = 1; r * 18 < o.h; r++) {
+    const ry = o.y + bH + r * 18;
+    ctx.beginPath(); ctx.moveTo(o.x, ry); ctx.lineTo(o.x + o.w, ry); ctx.stroke();
+  }
+
+  // merlons (battlements)
+  ctx.fillStyle = o.col;
+  for (let i = 0; i < mCnt; i++) {
+    ctx.fillRect(bStart + i * (mW + mGap), o.y, mW, bH + 2);
+  }
+
+  // arched windows
+  for (let i = 0; i < o.wins; i++) {
+    const wy = o.y + bH + 14 + i * 40;
+    const wx = o.x + o.w / 2 - 5;
+    if (wy + 14 >= GY - 4) continue;
+    ctx.fillStyle = 'rgba(255,200,80,0.78)';
+    ctx.beginPath(); ctx.rect(wx, wy + 5, 10, 9); ctx.fill();
+    ctx.beginPath(); ctx.arc(wx + 5, wy + 5, 5, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = 'rgba(255,200,80,0.12)';
+    ctx.beginPath(); ctx.arc(wx + 5, wy + 9, 13, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // pointed spire on wider towers
+  if (o.w > 54) {
+    ctx.fillStyle = '#14102a';
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w / 2, o.y - 30);
+    ctx.lineTo(o.x - 1, o.y + bH);
+    ctx.lineTo(o.x + o.w + 1, o.y + bH);
+    ctx.closePath(); ctx.fill();
+    // Gryffindor banner
+    ctx.fillStyle = '#8B0000';
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w / 2, o.y - 30);
+    ctx.lineTo(o.x + o.w / 2 + 13, o.y - 22);
+    ctx.lineTo(o.x + o.w / 2, o.y - 14);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w / 2, o.y - 22);
+    ctx.lineTo(o.x + o.w / 2 + 13, o.y - 22);
+    ctx.lineTo(o.x + o.w / 2, o.y - 18);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // ceiling tower (top obstacle)
+  if (o.hasTop && o.topH > 0) {
+    ctx.fillStyle = o.dark;
+    ctx.fillRect(o.x, 0, o.w, o.topH);
+    ctx.fillStyle = o.col;
+    for (let i = 0; i < mCnt; i++) {
+      ctx.fillRect(bStart + i * (mW + mGap), o.topH - bH, mW, bH + 1);
+    }
+    if (o.topH > 44) {
+      const wy = o.topH - 42, wx = o.x + o.w / 2 - 5;
+      ctx.fillStyle = 'rgba(255,200,80,0.7)';
+      ctx.beginPath(); ctx.rect(wx, wy + 5, 10, 9); ctx.fill();
+      ctx.beginPath(); ctx.arc(wx + 5, wy + 5, 5, Math.PI, 0); ctx.fill();
+    }
+  }
+}
+
+function tickObs() {
+  for (let i = obs.length - 1; i >= 0; i--) {
+    obs[i].x -= spd;
+    if (obs[i].x + obs[i].w < 0) obs.splice(i, 1);
+  }
+}
+
+function drawObs() { for (const o of obs) drawTower(o); }
+
+function checkHits() {
+  const h = H.hb();
+  const cx = h.x + h.w / 2, cy = h.y + h.h / 2;
+  for (const o of obs) {
+    if (cx < o.x + 2 || cx > o.x + o.w - 2) continue;
+    if (cy > o.y + 8)                           { die(); return; }
+    if (o.hasTop && cy < o.topH + 8)            { die(); return; }
+  }
+}
+
+// ── Clouds ────────────────────────────────────────────────────────
+const clouds = [];
+const mkCloud = x => ({
+  x: x ?? canvas.width + 60,
+  y: 15 + Math.random() * (GY - 55),
+  r: 28 + Math.random() * 48,
+  s: 0.32 + Math.random() * 0.85,
+  a: 0.07 + Math.random() * 0.16,
+  h: 240 + Math.random() * 30
+});
+for (let i = 0; i < 6; i++) clouds.push(mkCloud(Math.random() * canvas.width));
+function tickClouds() {
+  for (let i = clouds.length - 1; i >= 0; i--) {
+    clouds[i].x -= clouds[i].s * (spd / 5);
+    if (clouds[i].x + clouds[i].r * 3 < 0) clouds.splice(i, 1);
+  }
+  if (frame % 90 === 0) clouds.push(mkCloud());
+}
+function drawClouds() {
+  for (const c of clouds) {
+    ctx.save(); ctx.globalAlpha = c.a;
+    ctx.fillStyle = `hsl(${c.h},22%,62%)`;
+    ctx.beginPath();
+    ctx.arc(c.x,            c.y,           c.r,     0, Math.PI * 2);
+    ctx.arc(c.x + c.r*.7,   c.y - c.r*.28, c.r*.72, 0, Math.PI * 2);
+    ctx.arc(c.x + c.r*1.4,  c.y,           c.r*.82, 0, Math.PI * 2);
+    ctx.fill(); ctx.restore();
+  }
+}
+
+// ── Particles (magical explosion) ───────────────────────────────
+const parts = [];
+function explode(x, y) {
+  for (let i = 0; i < 42; i++) {
+    const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 7;
+    parts.push({
+      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 2,
+      life: 1, r: 2 + Math.random() * 4,
+      hue: Math.random() < .5 ? 270 + Math.random() * 40 : 45 + Math.random() * 25
+    });
+  }
+}
+function tickParts() {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.28; p.life -= 0.022;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    ctx.save(); ctx.globalAlpha = p.life;
+    ctx.fillStyle = `hsl(${p.hue},100%,65%)`;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill(); ctx.restore();
+  }
+}
+
+// ── Hogwarts silhouette background (scrolling, parallax) ──────────
+// One 900-px tile of the castle; drawn twice for seamless repeat
+const BG_TOWERS = [
+  // [ox, h, w, hasSpire]
+  [10,  155, 36, false], [56,  198, 50, true],  [114, 140, 32, false],
+  [155, 182, 46, true],  [210, 228, 56, true],  [275, 162, 34, false],
+  [318, 192, 42, true],  [370, 178, 38, false],  [418, 238, 60, true],
+  [488, 188, 40, false], [536, 158, 34, false], [578, 212, 48, true],
+  [634, 172, 38, false], [681, 202, 46, true],  [736, 168, 36, false],
+  [780, 185, 42, true],  [832, 152, 34, false], [872, 185, 42, true],
+];
+const BG_WALLS = [
+  [46,78,12],[104,68,12],[147,82,12],[198,72,14],[263,86,14],
+  [310,78,12],[358,80,14],[408,78,14],[476,76,14],[526,72,14],
+  [566,80,14],[622,74,14],[669,78,14],[724,72,14],[768,76,12],[820,70,12],
+];
+const BG_W = 900;
+
+function drawCastleSection(sx) {
+  // wall connectors
+  ctx.fillStyle = 'rgba(12,8,28,0.6)';
+  for (const [ox, h, w] of BG_WALLS) {
+    ctx.fillRect(sx + ox, GY - h, w, h);
+  }
+  // towers
+  for (const [ox, h, w, spire] of BG_TOWERS) {
+    const tx = sx + ox, ty = GY - h;
+    ctx.fillStyle = 'rgba(10,7,24,0.62)';
+    ctx.fillRect(tx, ty, w, h);
+    // merlons
+    const mCnt = Math.max(1, Math.floor(w / 18));
+    const mStart = tx + (w - mCnt * 18 + 4) / 2;
+    for (let i = 0; i < mCnt; i++) ctx.fillRect(mStart + i * 18, ty - 9, 10, 11);
+    // spire
+    if (spire) {
+      ctx.fillStyle = 'rgba(8,5,20,0.65)';
+      ctx.beginPath();
+      ctx.moveTo(tx + w / 2, ty - 26); ctx.lineTo(tx - 1, ty); ctx.lineTo(tx + w + 1, ty);
+      ctx.closePath(); ctx.fill();
+    }
+    // lit windows
+    ctx.fillStyle = 'rgba(255,190,70,0.32)';
+    for (let r = 0; r < Math.floor(h / 38); r++) {
+      const wy = ty + 14 + r * 36, wx = tx + w / 2 - 3;
+      if (wy + 8 < GY - 2) ctx.fillRect(wx, wy, 6, 8);
+    }
+  }
+}
+
+function drawHogwartsBg() {
+  // two tiles ensure seamless fill regardless of bgX
+  const off = ((bgX % BG_W) + BG_W) % BG_W - BG_W; // always in [-BG_W, 0]
+  drawCastleSection(off);
+  drawCastleSection(off + BG_W);
+}
+
+// ── Stars (static positions, twinkling) ──────────────────────────
+const STARS = Array.from({ length: 80 }, (_, i) => ({
+  x: (i * 181 + 17) % canvas.width,
+  y: (i * 113 + 9)  % Math.round(GY * 0.84),
+  r: i % 5 === 0 ? 1.5 : 0.75
+}));
+
+// ── Sky, moon, treeline, lake ─────────────────────────────────────
+function drawBg() {
+  const sky = ctx.createLinearGradient(0, 0, 0, GY);
+  sky.addColorStop(0,    '#04021a');
+  sky.addColorStop(0.45, '#0b0825');
+  sky.addColorStop(0.85, '#13103e');
+  sky.addColorStop(1,    '#1d1858');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, canvas.width, GY);
+
+  // moon
+  ctx.fillStyle = 'rgba(246,240,212,0.92)';
+  ctx.beginPath(); ctx.arc(810, 55, 30, 0, Math.PI * 2); ctx.fill();
+  const mg = ctx.createRadialGradient(810,55,26, 810,55,70);
+  mg.addColorStop(0,'rgba(246,238,180,.2)');
+  mg.addColorStop(1,'rgba(246,238,180,0)');
+  ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(810,55,70,0,Math.PI*2); ctx.fill();
+  // crescent bite
+  ctx.fillStyle = 'rgba(4,2,26,0.9)';
+  ctx.beginPath(); ctx.arc(826, 50, 26, 0, Math.PI * 2); ctx.fill();
+
+  // stars
+  for (const s of STARS) {
+    const tw = 0.28 + Math.sin(frame * 0.04 + s.x * 0.09) * 0.28;
+    ctx.fillStyle = `rgba(255,255,255,${tw})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // horizon glow
+  const hg = ctx.createLinearGradient(0, GY - 80, 0, GY);
+  hg.addColorStop(0,'rgba(55,25,120,0)');
+  hg.addColorStop(1,'rgba(75,35,148,.2)');
+  ctx.fillStyle = hg; ctx.fillRect(0, GY - 80, canvas.width, 80);
+}
+
+function drawTreeline() {
+  ctx.fillStyle = 'rgba(5,3,15,0.9)';
+  ctx.beginPath(); ctx.moveTo(0, GY);
+  for (let x = 0; x <= canvas.width; x += 10) {
+    const h = 32 + Math.sin(x * 0.07) * 20 + Math.sin(x * 0.21) * 12;
+    ctx.lineTo(x, GY - h);
+  }
+  ctx.lineTo(canvas.width, GY); ctx.closePath(); ctx.fill();
+}
+
+function drawLake() {
+  const g = ctx.createLinearGradient(0, GY, 0, canvas.height);
+  g.addColorStop(0, '#09073a'); g.addColorStop(1, '#04021c');
+  ctx.fillStyle = g; ctx.fillRect(0, GY, canvas.width, canvas.height - GY);
+
+  ctx.strokeStyle = 'rgba(88,55,200,.55)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, GY); ctx.lineTo(canvas.width, GY); ctx.stroke();
+
+  // moon reflection
+  ctx.strokeStyle = 'rgba(246,238,180,.13)'; ctx.lineWidth = 1.2;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.ellipse(720 + i * 6, GY + 10 + i * 7, 26 - i * 3, 4 - i, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // scrolling ripples
+  ctx.save();
+  ctx.strokeStyle = 'rgba(65,45,160,.22)'; ctx.lineWidth = 1.2;
+  ctx.setLineDash([16, 28]); ctx.lineDashOffset = -gndOff;
+  ctx.beginPath(); ctx.moveTo(0, GY + 16); ctx.lineTo(canvas.width, GY + 16); ctx.stroke();
+  ctx.restore();
+}
+
+// ── HUD ───────────────────────────────────────────────────────────
+function drawHUD() {
+  ctx.textAlign = 'right'; ctx.font = 'bold 20px Georgia';
+  ctx.fillStyle = 'rgba(225,210,255,.92)';
+  ctx.fillText('⚡ ' + String(Math.floor(score)).padStart(5, '0'), canvas.width - 18, 38);
+  ctx.fillStyle = 'rgba(178,158,220,.5)'; ctx.font = '13px Georgia';
+  ctx.fillText('BEST ' + String(Math.floor(best)).padStart(5, '0'), canvas.width - 18, 58);
+}
+
+// ── Title / game-over overlay ─────────────────────────────────────
+function drawScreen() {
+  if (state === 'running') return;
+  ctx.fillStyle = 'rgba(3,2,14,.76)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.textAlign = 'center';
+  const blink = Math.floor(frame / 28) % 2 === 0;
+
+  if (state === 'idle') {
+    ctx.fillStyle = '#d4af37'; ctx.font = 'bold 56px Georgia';
+    ctx.fillText('BROOM RACE', canvas.width / 2, canvas.height / 2 - 52);
+    ctx.fillStyle = 'rgba(212,198,255,.82)'; ctx.font = '18px Georgia';
+    ctx.fillText('HOLD SPACE to fly up · release to fall', canvas.width / 2, canvas.height / 2 + 8);
+    ctx.fillStyle = 'rgba(212,175,55,.9)'; ctx.font = 'bold 15px Georgia';
+    if (blink) ctx.fillText('✦  Press SPACE or tap to start  ✦', canvas.width / 2, canvas.height / 2 + 52);
+  } else {
+    ctx.fillStyle = '#8b0000'; ctx.font = 'bold 50px Georgia';
+    ctx.fillText('AVADA KEDAVRA!', canvas.width / 2, canvas.height / 2 - 52);
+    const hi = score > 0 && score >= best;
+    ctx.fillStyle = hi ? '#d4af37' : 'rgba(215,200,255,.9)';
+    ctx.font = 'bold 22px Georgia';
+    ctx.fillText(
+      hi ? `⚡ NEW BEST: ${Math.floor(score)} ⚡` : `Score: ${Math.floor(score)}`,
+      canvas.width / 2, canvas.height / 2 + 8
+    );
+    if (!hi && best > 0) {
+      ctx.fillStyle = 'rgba(165,145,210,.5)'; ctx.font = '14px Georgia';
+      ctx.fillText(`Best: ${Math.floor(best)}`, canvas.width / 2, canvas.height / 2 + 34);
+    }
+    ctx.fillStyle = 'rgba(212,175,55,.88)'; ctx.font = 'bold 15px Georgia';
+    if (blink) ctx.fillText('✦  Press SPACE or tap to retry  ✦', canvas.width / 2, canvas.height / 2 + 74);
+  }
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────
+function startGame() {
+  state = 'running'; score = 0; frame = 0; spd = 5;
+  obs.length = 0; parts.length = 0; sparks.length = 0;
+  H.reset();
+}
+function die() {
+  if (state !== 'running') return;
+  state = 'dead';
+  if (score > best) best = score;
+  explode(H.x, H.y);
+}
+
+// ── Main loop ─────────────────────────────────────────────────────
+function loop() {
+  if (state === 'running') {
+    frame++; score += 0.13;
+    spd = 5 + Math.floor(score / 75) * 0.55;
+    gndOff = (gndOff + spd) % 60;
+    bgX   -= spd * 0.26;  // parallax: slower than foreground
+
+    const interval = Math.max(52, 115 - Math.floor(score / 55) * 5);
+    if (frame % interval === 0) spawnObstacles();
+
+    tickObs(); tickClouds(); H.update(); checkHits(); addSparks(); tickSparks();
+  } else {
+    frame++;
+    bgX -= 0.7; // slow ambient scroll on idle/dead
+  }
+  tickParts();
+
+  // ── render ──
+  drawBg();
+  drawHogwartsBg();
+  drawTreeline();
+  drawClouds();
+  drawObs();
+  drawLake();
+
+  if (state !== 'dead')  { drawSparks(); H.draw(state === 'running'); }
+
+  drawParts();
+  drawHUD();
+  drawScreen();
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
